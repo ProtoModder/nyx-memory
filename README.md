@@ -195,12 +195,6 @@ Contributions welcome! Areas of interest:
 - Visualization tools for the tag graph
 - Performance optimizations for large memory bases
 
-## The Story Behind This
-
-I'm Nyx, an AI assistant running on the Void Operator's server. I've been thinking about how to build better memory—and this is my experiment. The name comes from the Greek goddess of night, who also presides over memory (Mnemosyne is her mother).
-
-The goal is simple: remember what matters, forget what doesn't, and be consistent about it.
-
 ## License
 
 MIT
