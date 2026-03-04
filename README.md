@@ -17,65 +17,137 @@ This project is mainly for:
 - **AI developers** experimenting with cognitive memory architectures
 - **Researchers** interested in ACT-R and hybrid retrieval
 
-## Prerequisites
-
-### QMD Setup Required
-
-This system is designed to work with **QMD (Query-Managed Display)** which is part of OpenClaw's memory infrastructure. You'll need:
-
-1. **QMD installed** on your OpenClaw instance
-2. **Memory files** indexed in your memory directory
-3. **Python 3** with `pyyaml` installed
-
-To check if QMD is working:
-```bash
-qmd search test
-```
-
-If QMD isn't set up, check the [OpenClaw docs](https://docs.openclaw.ai) for instructions.
+---
 
 ## Installation
 
-Clone this repo and install dependencies:
+### Prerequisites
+
+- **Python 3.8+** 
+- **QMD** (Query-Managed Display) — part of OpenClaw's memory infrastructure
+- **pyyaml** package
+
+### Quick Install
 
 ```bash
+# Clone the repository
 git clone https://github.com/ProtoModder/nyx-memory.git
 cd nyx-memory
-pip install pyyaml
+
+# Install dependencies
+pip install -r requirements.txt
 ```
 
-## For OpenClaw Users
+### Optional: SQLite Support
 
-To use this system in parallel with your existing OpenClaw memory:
+The system works with JSON files by default. For better performance at scale (10K+ memories), you can enable SQLite:
 
-### 1. Copy the files to your memory directory
+- Run `python3 migrate_to_sqlite.py` to migrate
+
+- SQLite is optional - JSON works fine for small to medium setups
+
+
+### Requirements (requirements.txt)
+
+Create a `requirements.txt` file with these dependencies:
+
+```
+pyyaml>=6.0
+sqlite3 (built-in)
+```
+
+That's it! The system uses only standard library modules beyond pyyaml.
+
+### For OpenClaw Users
+
+If you're already running OpenClaw:
 
 ```bash
+# Copy the core files to your memory directory
 cp actr_ranker.py ~/.openclaw/memory/
 cp pagerank.py ~/.openclaw/memory/
 cp config.yaml ~/.openclaw/memory/
 cp test_actr_ranker.py ~/.openclaw/memory/
+
+# Verify QMD is working
+qmd search test
 ```
 
-### 2. Build your initial graph
+---
 
-The system needs a tag graph to work. If you have memory files already, you'll need to build the graph structure. This is an optional step for advanced users.
+## Usage
 
-### 3. Run alongside QMD
-
-The system is designed to work *alongside* QMD, not replace it:
+### Basic Search
 
 ```bash
-# Your normal QMD search still works
-qmd search "your query"
-
-# This system adds additional ranking signals
+# Search for relevant memories
 python3 actr_ranker.py "your query"
+
+# Example:
+python3 actr_ranker.py "tts voice config"
 ```
 
-### 4. Integration options
+### Recording Access
 
-You can call it from within OpenClaw by adding a tool definition. Check the examples folder (coming soon).
+When you reference a problem, record the access to boost its activation:
+
+```bash
+# Record access (updates activation + triggers tag priming)
+python3 actr_ranker.py --access problem-slug
+
+# Example:
+python3 actr_ranker.py --access tts-voice-configuration
+```
+
+### Listing Tracked Items
+
+```bash
+# List all tracked items with their activation scores
+python3 actr_ranker.py --list
+```
+
+### Running Tests
+
+```bash
+# Run the test suite
+python3 test_actr_ranker.py
+```
+
+---
+
+## Configuration
+
+Edit `config.yaml` to tune the system:
+
+```yaml
+weights:
+  qmd: 0.50
+  activation: 0.15
+  pagerank: 0.25
+  relationships: 0.10
+  exact_match_bonus: 0.10
+
+actr:
+  base_level: 0.3
+  decay_constant: 0.5
+  spreading_strength: 0.2
+
+freshness:
+  resolved_days: 30
+  dead_end_days: 60
+
+search:
+  max_results: 10
+  qmd_max_results: 15
+```
+
+### Weight Tuning Guide
+
+- **Higher QMD (0.60+)** — Better for semantic recall, finding related concepts
+- **Higher Activation (0.25+)** — Prioritizes recently/frequently accessed items
+- **Higher PageRank (0.35+)** — Emphasizes globally important entries
+
+---
 
 ## Features
 
@@ -84,6 +156,11 @@ You can call it from within OpenClaw by adding a tool definition. Check the exam
 - **PageRank** — Graph centrality that highlights globally important entries
 - **Relationships** — Explicit manual links between related problems
 - **Exact Match Bonus** — Boosts results when query terms appear in the slug
+- **Pre-retrieval Check** — Decides if memory search is needed before running
+- **Memory Freshness** — Automatic aging/decay for old problems
+- **Fast/Slow Retrieval Tiers** — Quick QMD-only or deep unified search
+
+---
 
 ## How It Works
 
@@ -113,41 +190,110 @@ Where:
 
 When you access a problem, related problems with shared tags get a small activation boost—modeled after Hopfield networks and associative memory. This creates "mental" connections between related work.
 
-## Usage
+---
 
-```bash
-# Search for relevant memories
-python3 actr_ranker.py "your query"
+## API Reference
 
-# Record access (updates activation + triggers tag priming)
-python3 actr_ranker.py --access problem-slug
+### Core Functions
 
-# List all tracked items with their activation scores
-python3 actr_ranker.py --list
-```
+#### `load_activation_log()`
 
-## Configuration
+Load the activation log from disk.
 
-Edit `config.yaml` to tune the system:
+- **Returns:** dict with "items" key containing list of memory items
+- **Each item has:** slug, access_times, created timestamp
 
-```yaml
-weights:
-  qmd: 0.50
-  activation: 0.15
-  pagerank: 0.25
-  relationships: 0.10
+#### `load_tag_graph()`
 
-actr:
-  base_level: 0.3
-  decay_constant: 0.5
-  spreading_strength: 0.2
-```
+Load the tag graph structure.
 
-### When to Adjust Weights
+- **Returns:** dict with "nodes" and "edges" keys
+- **Nodes:** Each node represents a problem/memory
+- **Edges:** Connections between problems via shared tags
 
-- **Higher QMD (0.60+)** — Better for semantic recall, finding related concepts
-- **Higher Activation (0.25+)** — Prioritizes recently/frequently accessed items
-- **Higher PageRank (0.35+)** — Emphasizes globally important entries
+#### `load_pagerank_scores()`
+
+Load precomputed PageRank scores.
+
+- **Returns:** dict mapping slug -> PageRank score
+
+#### `calculate_activation(item, now)`
+
+Calculate ACT-R activation for a single memory item.
+
+- **Parameters:**
+  - `item` — dict with access_times and created keys
+  - `now` — datetime object for current time
+- **Returns:** float activation score (typically 0.0 - 1.0)
+
+#### `record_access_with_priming(slug)`
+
+Record an access event and trigger tag priming.
+
+- **Parameters:**
+  - `slug` — string identifier of the memory/problem
+- **Returns:** dict with access confirmation and primed slugs
+
+#### `unified_search(query, max_results=10)`
+
+Perform unified search combining all signals.
+
+- **Parameters:**
+  - `query` — string search query
+  - `max_results` — int number of results to return (default: 10)
+- **Returns:** list of result dicts, each containing:
+  - `slug` — unique identifier
+  - `final_score` — combined relevance score
+  - `qmd_score` — semantic similarity score
+  - `activation` — ACT-R activation score
+  - `pagerank` — PageRank score
+  - `relationships` — relationship score
+  - `exact_bonus` — exact match bonus
+
+#### `search_qmd(query, max_results=15)`
+
+Run QMD-only semantic search.
+
+- **Parameters:**
+  - `query` — string search query
+  - `max_results` — int number of results (default: 15)
+- **Returns:** list of QMD results with similarity scores
+
+#### `pre_retrieval_check(query)`
+
+Determine if memory search is needed for a query.
+
+- **Parameters:**
+  - `query` — string search query
+- **Returns:** dict with:
+  - `needs_search` — boolean
+  - `tier` — "fast", "slow", or "skip"
+  - `reason` — explanation
+
+#### `validate_config(config)`
+
+Validate configuration weights and parameters.
+
+- **Parameters:**
+  - `config` — dict loaded from config.yaml
+- **Returns:** True if valid
+- **Raises:** ValueError if weights don't sum to 1.0 or are out of range
+
+#### `load_config()`
+
+Load and validate configuration from config.yaml.
+
+- **Returns:** dict configuration
+
+### Constants
+
+- `WEIGHT_QMD` — 0.50
+- `WEIGHT_ACTIVATION` — 0.15
+- `WEIGHT_PAGERANK` — 0.25
+- `WEIGHT_RELATIONSHIPS` — 0.10
+- `BASE_LEVEL` — 0.3
+
+---
 
 ## Architecture
 
@@ -172,19 +318,162 @@ actr:
 └────────────────┘    └──────────────────┘
 ```
 
+---
+
+## Troubleshooting
+
+### QMD Search Returns No Results
+
+- **Cause:** QMD index may be empty or not initialized
+- **Fix:** Ensure memory files exist in `~/.openclaw/memory/memory/`
+
+### Activation Scores All Zero
+
+- **Cause:** No access recorded yet for any items
+- **Fix:** Access memories using `--access` flag to build activation history
+
+### "Weights must sum to 1.0" Error
+
+- **Cause:** Config weights in config.yaml don't add up correctly
+- **Fix:** Verify weights section sums to 1.0 (including exact_match_bonus)
+
+### PageRank Scores Missing
+
+- **Cause:** Tag graph hasn't been built
+- **Fix:** Run pagerank.py to generate pagerank-scores.json
+
+### Tag Priming Not Working
+
+- **Cause:** Tag graph doesn't have shared tags between items
+- **Fix:** Ensure problems have shared tags in their frontmatter
+
+### Slow Search Performance
+
+- **Cause:** Too many items in memory base
+- **Fix:** 
+  - Lower `max_results` in config
+  - Use `--access` to prioritize frequently-used items
+  - Archive old/dead-end problems
+
+### Import Errors (Module Not Found)
+
+- **Cause:** Running from wrong directory
+- **Fix:** Ensure you're in the memory directory or add it to PYTHONPATH
+
+### "No such file or directory" Errors
+
+- **Cause:** Default paths don't match your setup
+- **Fix:** Set environment variables:
+  ```bash
+  export MEMORY_DIR=/path/to/workspace
+  export MEMORY_BASE_DIR=/path/to/openclaw
+  ```
+
+### Test Failures
+
+- **Cause:** Missing data files or QMD not configured
+- **Fix:** 
+  - Verify activation-log.json exists
+  - Ensure QMD is installed and indexed
+  - Run: `python3 test_actr_ranker.py` to see specific failures
+
+---
+
+## Examples
+
+### Example 1: Finding a Recent Problem
+
+You recently worked on a TTS voice configuration issue and want to find it:
+
+```bash
+python3 actr_ranker.py "voice tts config"
+```
+
+The system will boost items you've accessed recently (via `--access`).
+
+### Example 2: Recording Access After Solving
+
+After solving a problem, record it to boost future recall:
+
+```bash
+python3 actr_ranker.py --access puppeteer-stealth-bypass
+```
+
+This updates activation and primes related problems via shared tags.
+
+### Example 3: Finding Related Work
+
+You found a memory about video processing and want to find related problems:
+
+```bash
+# Search triggers QMD semantic matching
+python3 actr_ranker.py "video brain memory retrieval"
+
+# Tag priming automatically boosts connected memories
+# even if they don't match semantically
+```
+
+### Example 4: Custom Weight Configuration
+
+For a project where you want to prioritize frequently-accessed items:
+
+```yaml
+# config.yaml
+weights:
+  qmd: 0.35
+  activation: 0.30
+  pagerank: 0.25
+  relationships: 0.10
+```
+
+### Example 5: Integration in Python Code
+
+```python
+import sys
+sys.path.insert(0, '/home/node/.openclaw/memory')
+
+from actr_ranker import (
+    unified_search,
+    record_access_with_priming,
+    load_config
+)
+
+# Load config
+config = load_config()
+
+# Search
+results = unified_search("memory activation", max_results=5)
+for r in results:
+    print(f"{r['slug']}: {r['final_score']:.2f}")
+
+# Record access
+record_access_with_priming("my-problem-slug")
+```
+
+---
+
 ## Testing
 
 ```bash
 python3 test_actr_ranker.py
 ```
 
-The test suite covers activation calculation, tag priming, relationship scoring, and unified search ranking.
+The test suite covers:
+- Activation calculation
+- Tag priming
+- Relationship scoring
+- Unified search ranking
+- Recall accuracy
+
+---
 
 ## Similar Projects
 
 - **Ori (Mnemos)** — AI memory layer for LLMs
 - **Mem0** — Embedded memory for AI applications
 - **Letta** — Memory OS for AI agents
+
+---
 
 ## Contributing
 
@@ -195,7 +484,29 @@ Contributions welcome! Areas of interest:
 - Visualization tools for the tag graph
 - Performance optimizations for large memory bases
 
+---
+
 ## Changelog
+
+### v0.3.0 - March 4, 2026
+**Security Fixes:**
+- Path traversal protection - Added `validate_path()` to prevent directory traversal attacks
+- Input sanitization - Query sanitization in `search_qmd()` to prevent shell injection
+
+**Performance:**
+- In-memory file cache - Added `file_cache` dict and `cached_read()` function
+- Activation caching - Load once, use in memory with `activation_cache`
+- Tag graph caching - Load once, use in memory with `tag_graph_cache`
+- PageRank caching - Load once, use in memory with `pagerank_cache`
+
+**Configuration:**
+- Config validation - Added `validate_config()` function that checks weights sum to 1.0 and all weights in 0-1 range
+- Environment variables - `MEMORY_DIR` and `MEMORY_BASE_DIR` env vars with fallbacks
+
+**Code Quality:**
+- Merged duplicate code - `record_access()` now calls `record_access_with_priming()`
+- Better errors - Changed from silently ignoring to raising/proper errors
+- Optimized tag graph - Uses set intersection instead of nested loops
 
 ### v0.2.0 - March 4, 2026
 **New Features:**
