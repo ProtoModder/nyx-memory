@@ -74,41 +74,54 @@ SQLITE_DB = MEMORY_BASE_DIR / "memory/nyx.db"
 SAFE_BASE_DIR = Path("/home/node/.openclaw/workspace")
 
 
-def validate_path(path):
+def validate_path(path, base=None):
     """
     Validate a path to prevent directory traversal attacks.
     
     Security checks:
     - No directory traversal (../etc/passwd)
     - Only allows safe characters: alphanumeric, /, -, _, .
-    - Must resolve to a path within SAFE_BASE_DIR
+    - Must resolve to a path within SAFE_BASE_DIR (or provided base)
     
     Args:
         path: The path string to validate
+        base: Optional base directory to validate against (for testing)
         
     Returns:
         bool: True if path is safe, False otherwise
+        
+    Raises:
+        ValueError: If path is invalid or contains traversal attempts
     """
     if not path:
         return False
     
     # Check for directory traversal attempts
     if ".." in path or path.startswith("/") or "\\" in path:
-        return False
+        raise ValueError(f"Invalid path: directory traversal attempt detected")
     
     # Only allow safe characters (alphanumeric, hyphen, underscore, dot, forward slash)
     if not re.match(r'^[\w\-./]+$', path):
-        return False
+        raise ValueError(f"Invalid path: unsafe characters in '{path}'")
     
     try:
-        # Resolve the full path and verify it's within SAFE_BASE_DIR
-        full_path = (SAFE_BASE_DIR / path).resolve()
-        
-        # Ensure the resolved path is within SAFE_BASE_DIR
-        if not str(full_path).startswith(str(SAFE_BASE_DIR.resolve())):
-            return False
-        
-        return True
+        if base is not None:
+            # Testing mode: validate against provided base
+            full_path = (base / path).resolve()
+            if not str(full_path).startswith(str(base.resolve())):
+                raise ValueError(f"Invalid path: would escape base directory")
+            return True
+        else:
+            # Production mode: validate against SAFE_BASE_DIR
+            full_path = (SAFE_BASE_DIR / path).resolve()
+            
+            # Ensure the resolved path is within SAFE_BASE_DIR
+            if not str(full_path).startswith(str(SAFE_BASE_DIR.resolve())):
+                raise ValueError(f"Invalid path: would escape safe directory")
+            
+            return True
+    except ValueError:
+        raise
     except Exception:
         return False
 
@@ -121,6 +134,60 @@ def load_config():
     return {}
 
 
+def validate_config(config: Dict[str, Any]) -> bool:
+    """
+    Validate configuration weights and parameters.
+    
+    Validates that:
+    - All weights are in range [0, 1]
+    - Weights sum to 1.0
+    - ACT-R parameters are in valid ranges
+    
+    Args:
+        config: Configuration dictionary from config.yaml
+        
+    Returns:
+        bool: True if config is valid
+        
+    Raises:
+        ValueError: If config is invalid with descriptive error message
+    """
+    weights = config.get("weights", {})
+    
+    # Extract weights
+    qmd = weights.get("qmd", 0.5)
+    activation = weights.get("activation", 0.15)
+    pagerank = weights.get("pagerank", 0.25)
+    relationships = weights.get("relationships", 0.1)
+    
+    # Validate each weight is in [0, 1]
+    weight_map = {"qmd": qmd, "activation": activation, "pagerank": pagerank, "relationships": relationships}
+    for name, value in weight_map.items():
+        if not (0 <= value <= 1):
+            raise ValueError(f"Weight '{name}'={value} not in 0-1 range")
+    
+    # Validate weights sum to 1.0 (with small tolerance)
+    total = qmd + activation + pagerank + relationships
+    if abs(total - 1.0) > 0.01:
+        raise ValueError(f"Weights sum to {total}, expected 1.0")
+    
+    # Validate ACT-R parameters
+    actr = config.get("actr", {})
+    base_level = actr.get("base_level", 0.3)
+    if not (0 <= base_level <= 1):
+        raise ValueError(f"ACT-R base_level={base_level} not in 0-1 range")
+    
+    decay_constant = actr.get("decay_constant", 0.5)
+    if not (0 <= decay_constant <= 1):
+        raise ValueError(f"ACT-R decay_constant={decay_constant} not in 0-1 range")
+    
+    spreading_strength = actr.get("spreading_strength", 0.2)
+    if not (0 <= spreading_strength <= 1):
+        raise ValueError(f"ACT-R spreading_strength={spreading_strength} not in 0-1 range")
+    
+    return True
+
+
 # Load config
 _config = load_config()
 
@@ -130,6 +197,10 @@ activation_cache = None
 # Query result cache (for 5-20x speedup on repeated queries)
 QUERY_CACHE_TTL = 300  # 5 minutes
 query_cache = {}  # {normalized_query: {"results": [...], "timestamp": time}}
+
+# File content cache (for test_cache_works)
+file_cache = {}  # {path: {"content": str, "timestamp": time}}
+FILE_CACHE_TTL = 60  # 1 minute
 
 
 def normalize_query(query):
@@ -178,6 +249,57 @@ def clear_cache():
     activation_cache = None
     query_cache.clear()
     logger.info("Query cache cleared.")
+
+
+def clear_file_cache():
+    """Clear the file content cache (for testing)."""
+    global file_cache
+    file_cache.clear()
+    logger.debug("File cache cleared.")
+
+
+def cached_read(filename: str, base_path) -> str:
+    """
+    Read a file with caching for performance.
+    
+    Args:
+        filename: Name of file to read
+        base_path: Base directory path (Path object)
+        
+    Returns:
+        str: File contents or empty string if not found/invalid
+    """
+    global file_cache
+    
+    # Validate path with base
+    try:
+        if not validate_path(str(filename), base_path):
+            return ""
+    except ValueError:
+        return ""
+    
+    cache_key = str(base_path / filename)
+    current_time = time.time()
+    
+    # Check cache
+    if cache_key in file_cache:
+        entry = file_cache[cache_key]
+        age = current_time - entry["timestamp"]
+        if age < FILE_CACHE_TTL:
+            return entry["content"]
+    
+    # Read from disk
+    try:
+        full_path = base_path / filename
+        if not full_path.exists():
+            file_cache[cache_key] = {"content": "", "timestamp": current_time}
+            return ""
+        
+        content = full_path.read_text()
+        file_cache[cache_key] = {"content": content, "timestamp": current_time}
+        return content
+    except Exception:
+        return ""
 
 
 # ============================================================================

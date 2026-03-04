@@ -35,6 +35,9 @@ from db import (
 )
 from memory_utils import load_tag_graph, load_pagerank_scores
 
+# Import from actr_ranker for unified search
+import actr_ranker
+
 
 class NyxMemoryHandler(BaseHTTPRequestHandler):
     """HTTP request handler for Nyx Memory API."""
@@ -81,7 +84,7 @@ class NyxMemoryHandler(BaseHTTPRequestHandler):
         self.send_json({"error": "Not found", "path": path}, status=404)
 
     def handle_search(self, query):
-        """Handle /search endpoint."""
+        """Handle /search endpoint using actr_ranker."""
         q = query.get("q", [""])[0]
         limit = int(query.get("limit", [10])[0])
 
@@ -90,8 +93,8 @@ class NyxMemoryHandler(BaseHTTPRequestHandler):
             return
 
         try:
-            # Use the existing search function
-            results = search_problems(query=q, limit=limit)
+            # Use actr_ranker's unified_search (combines QMD, activation, pagerank, relationships)
+            results = actr_ranker.unified_search(query=q, max_results=limit)
             
             # Format results
             formatted = []
@@ -104,7 +107,12 @@ class NyxMemoryHandler(BaseHTTPRequestHandler):
                     "tags": r.get("tags", []),
                     "path": r.get("path"),
                     "access_count": r.get("access_count"),
-                    "last_access": r.get("last_access")
+                    "last_access": r.get("last_access"),
+                    "score": r.get("score"),
+                    "qmd_score": r.get("qmd_score"),
+                    "activation_score": r.get("activation_score"),
+                    "pagerank_score": r.get("pagerank_score"),
+                    "relationship_score": r.get("relationship_score")
                 })
 
             self.send_json({
@@ -116,30 +124,33 @@ class NyxMemoryHandler(BaseHTTPRequestHandler):
             self.send_json({"error": str(e)}, status=500)
 
     def handle_recent(self, query):
-        """Handle /recent endpoint."""
+        """Handle /recent endpoint using actr_ranker activation data."""
         limit = int(query.get("limit", [10])[0])
         limit = min(limit, 50)  # Cap at 50
 
         try:
-            # Get all problems and sort by last access
-            all_problems = get_all_problems()
+            # Use actr_ranker's unified_search with empty query to get by activation
+            # This returns results sorted by activation (recency + frequency)
+            results = actr_ranker.unified_search(query="", max_results=limit)
             
-            # Sort by last_access descending (most recent first)
-            sorted_problems = sorted(
-                all_problems,
-                key=lambda p: p.get("last_access") or "",
+            # Sort by activation score (most recent/frequent first)
+            sorted_results = sorted(
+                results,
+                key=lambda p: p.get("activation_score", 0),
                 reverse=True
-            )[:limit]
+            )
 
             formatted = []
-            for p in sorted_problems:
+            for p in sorted_results:
                 formatted.append({
                     "slug": p.get("slug"),
                     "title": p.get("title"),
                     "status": p.get("status"),
                     "priority": p.get("priority"),
                     "tags": p.get("tags", []),
-                    "last_access": p.get("last_access")
+                    "last_access": p.get("last_access"),
+                    "access_count": p.get("access_count"),
+                    "activation_score": p.get("activation_score")
                 })
 
             self.send_json({
