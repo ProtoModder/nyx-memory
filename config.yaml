@@ -1,0 +1,27 @@
+# ACT-R Unified Memory Configuration
+
+# Weights for unified search
+weights:
+  qmd: 0.50
+  activation: 0.15
+  pagerank: 0.25
+  relationships: 0.10
+  exact_match_bonus: 0.10
+
+# ACT-R parameters
+actr:
+  base_level: 0.3
+  decay_constant: 0.5
+  spreading_strength: 0.2
+
+# Paths (relative to memory directory)
+paths:
+  activation_log: activation-log.json
+  tag_graph: tag-graph.json
+  pagerank_scores: pagerank-scores.json
+  problems_dir: memory/problems/
+
+# Search settings
+search:
+  max_results: 10
+  qmd_max_results: 15

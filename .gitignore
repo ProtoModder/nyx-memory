@@ -1,0 +1,10 @@
+*.pyc
+__pycache__/
+*.egg-info/
+.pytest_cache/
+activation-log.json
+tag-graph.json
+pagerank-scores.json
+main.sqlite
+memory/
+.DS_Store
