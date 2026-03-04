@@ -7,6 +7,8 @@ ASCII-based visualizations for Nyx Memory System:
 - Relationship graph (ASCII nodes/edges)
 - Activation timeline (recently accessed)
 - Memory health dashboard
+- Sparkline charts
+- Heatmaps
 
 Usage:
   python visualize.py --dashboard    # Show health dashboard
@@ -19,186 +21,135 @@ Or import functions:
   from visualize import show_dashboard, show_tag_cloud, show_relationship_graph, show_activation_timeline
 """
 
-import json
-import os
 from datetime import datetime, timezone
 from pathlib import Path
 
-# ============================================================================
-# ANSI COLORS
-# ============================================================================
-RESET = "\033[0m"
-BOLD = "\033[1m"
-
-GREEN = "\033[92m"      # Success, high scores
-YELLOW = "\033[93m"     # Warnings, medium scores
-RED = "\033[91m"        # Errors, low scores
-BLUE = "\033[94m"       # Headers, info
-CYAN = "\033[96m"       # Highlights
-GRAY = "\033[90m"       # Muted text
-
-
-def colorize(text, color):
-    """Apply ANSI color to text."""
-    return f"{color}{text}{RESET}"
-
-
-def success(text):
-    """Green text for success messages."""
-    return colorize(text, GREEN)
-
-
-def warning(text):
-    """Yellow text for warnings."""
-    return colorize(text, YELLOW)
-
-
-def error(text):
-    """Red text for errors."""
-    return colorize(text, RED)
-
-
-def header(text):
-    """Blue bold text for headers."""
-    return colorize(f"{BOLD}{text}", BLUE)
-
-
-def highlight(text):
-    """Cyan text for highlights."""
-    return colorize(text, CYAN)
-
-
-def muted(text):
-    """Gray text for muted info."""
-    return colorize(text, GRAY)
-
+# Import shared utilities
+from memory_utils import (
+    load_activation_log,
+    load_tag_graph,
+    load_pagerank_scores,
+    load_tags_from_file,
+    calculate_activation,
+    BASE_LEVEL,
+    DECAY_CONSTANT,
+    # ANSI colors
+    colorize,
+    success,
+    warning,
+    error,
+    header,
+    highlight,
+    muted,
+    RESET,
+    BOLD,
+    GREEN,
+    YELLOW,
+    RED,
+    BLUE,
+    CYAN,
+    GRAY,
+)
 
 # ============================================================================
-# DATA LOADING
+# EXTENDED COLOR PALETTE (ANSI 256 colors)
 # ============================================================================
 
-MEMORY_DIR = Path(os.environ.get("MEMORY_DIR", "/home/node/.openclaw/workspace"))
-MEMORY_BASE_DIR = Path(os.environ.get("MEMORY_BASE_DIR", "/home/node/.openclaw"))
+# Gradient palettes for different visualizations
+TAG_CLOUD_PALETTE = [
+    "\033[38;5;196m",  # Red
+    "\033[38;5;199m",  # Pink
+    "\033[38;5;201m",  # Hot pink
+    "\033[38;5;205m",  # Light pink
+    "\033[38;5;207m",  # Pink
+    "\033[38;5;219m",  # Light magenta
+    "\033[38;5;225m",  # Very light pink
+    "\033[38;5;231m",  # White
+]
 
-ACTIVATION_LOG = MEMORY_BASE_DIR / "memory/activation-log.json"
-TAG_GRAPH_PATH = MEMORY_BASE_DIR / "memory/tag-graph.json"
-PAGERANK_SCORES_PATH = MEMORY_BASE_DIR / "memory/pagerank-scores.json"
+ACTIVATION_PALETTE = [
+    "\033[38;5;196m",  # Red (cold)
+    "\033[38;5;202m",  # Orange-red
+    "\033[38;5;208m",  # Orange
+    "\033[38;5;214m",  # Gold
+    "\033[38;5;220m",  # Yellow
+    "\033[38;5;154m",  # Lime
+    "\033[38;5;118m",  # Green
+    "\033[38;5;35m",   # Dark green (hot)
+]
 
-activation_cache = None
-tag_graph_cache = None
-pagerank_cache = None
+SPARKLINE_PALETTE = [
+    "\033[38;5;239m",  # Dark gray
+    "\033[38;5;245m",  # Gray
+    "\033[38;5;250m",  # Light gray
+    "\033[38;5;255m",  # Near white
+]
 
-
-def load_activation_log(force_reload=False):
-    """Load the activation log with caching."""
-    global activation_cache
-    
-    if activation_cache is not None and not force_reload:
-        return activation_cache
-    
-    try:
-        if ACTIVATION_LOG.exists():
-            with open(ACTIVATION_LOG) as f:
-                activation_cache = json.load(f)
-                return activation_cache
-    except Exception as e:
-        print(f"ERROR: Could not load activation-log: {e}")
-    
-    activation_cache = {"version": "1.0", "last_updated": None, "items": {}}
-    return activation_cache
-
-
-def load_tag_graph(force_reload=False):
-    """Load the tag graph with caching."""
-    global tag_graph_cache
-    
-    if tag_graph_cache is not None and not force_reload:
-        return tag_graph_cache
-    
-    if TAG_GRAPH_PATH.exists():
-        try:
-            with open(TAG_GRAPH_PATH) as f:
-                tag_graph_cache = json.load(f)
-                return tag_graph_cache
-        except Exception as e:
-            print(f"ERROR: Could not load tag-graph: {e}")
-    
-    tag_graph_cache = {"nodes": {}, "edges": [], "tag_index": {}}
-    return tag_graph_cache
-
-
-def load_pagerank_scores(force_reload=False):
-    """Load PageRank scores with caching."""
-    global pagerank_cache
-    
-    if pagerank_cache is not None and not force_reload:
-        return pagerank_cache
-    
-    try:
-        if PAGERANK_SCORES_PATH.exists():
-            with open(PAGERANK_SCORES_PATH) as f:
-                data = json.load(f)
-                pagerank_cache = data.get("scores", {})
-                return pagerank_cache
-    except Exception as e:
-        print(f"ERROR: Could not load pagerank-scores: {e}")
-    
-    pagerank_cache = {}
-    return pagerank_cache
-
-
-def load_tags_from_file(path):
-    """Load tags from a problem markdown file."""
-    full_path = MEMORY_DIR / path
-    if not full_path.exists():
-        return []
-    
-    try:
-        content = full_path.read_text()
-        for line in content.split('\n'):
-            line = line.strip()
-            if line.startswith('**Tags:**'):
-                tags_str = line.replace('**Tags:**', '').strip()
-                if tags_str:
-                    return [t.strip().rstrip(',') for t in tags_str.split() if t.strip()]
-    except Exception:
-        pass
-    
-    return []
-
+# Box drawing characters
+BOX_TL = "╭"
+BOX_TR = "╮"
+BOX_BL = "╰"
+BOX_BR = "╯"
+BOX_H = "─"
+BOX_V = "│"
 
 # ============================================================================
-# CALCULATION HELPERS
+# VISUALIZATION HELPERS
 # ============================================================================
 
-BASE_LEVEL = 0.3
-DECAY_CONSTANT = 0.5
+def get_gradient_color(value, palette):
+    """Get color from gradient palette based on normalized value (0-1)."""
+    idx = min(int(value * (len(palette) - 1)), len(palette) - 1)
+    return palette[idx]
 
 
-def calculate_activation(item_data, current_time):
-    """Calculate ACT-R style activation."""
-    access_times = item_data.get("access_times", [])
-    if not access_times:
-        return BASE_LEVEL
+def color_bar(value, width=10, palette=None):
+    """Create a colored bar chart segment."""
+    if palette is None:
+        palette = ACTIVATION_PALETTE
+    fill_count = int(value * width)
+    empty_count = width - fill_count
+    color = get_gradient_color(value, palette)
+    return f"{color}{'█' * fill_count}{GRAY}{'░' * empty_count}{RESET}"
+
+
+def sparkline(values, width=20, palette=None):
+    """Generate a colored ASCII sparkline."""
+    if not values or len(values) < 2:
+        return muted("─" * width)
     
-    try:
-        last_access = datetime.fromisoformat(access_times[-1].replace("Z", "+00:00"))
-        seconds_ago = (current_time - last_access).total_seconds()
-        recency = 1.0 / ((seconds_ago / 3600) + 1)
-        
-        frequency = len(access_times)
-        frequency_bonus = 0.1 * (frequency - 1)
-        
-        age = (current_time - datetime.fromisoformat(
-            item_data["created"].replace("Z", "+00:00")
-        )).total_seconds() / 86400
-        
-        decay = DECAY_CONSTANT * (age ** 0.5)
-        
-        activation = BASE_LEVEL + recency * 0.4 + frequency_bonus - decay
-        return max(0.0, min(1.0, activation))
-    except Exception:
-        return BASE_LEVEL
+    if palette is None:
+        palette = SPARKLINE_PALETTE
+    
+    min_val = min(values)
+    max_val = max(values)
+    range_val = max_val - min_val if max_val != min_val else 1
+    
+    result = []
+    for v in values:
+        normalized = (v - min_val) / range_val
+        color = get_gradient_color(normalized, palette)
+        if normalized > 0.75:
+            char = "▄"
+        elif normalized > 0.5:
+            char = "▃"
+        elif normalized > 0.25:
+            char = "▂"
+        else:
+            char = "▁"
+        result.append(f"{color}{char}{RESET}")
+    
+    return "".join(result)
+
+
+def horizontal_rule(char=BOX_H, length=50):
+    """Create a horizontal rule."""
+    return header(char * length)
+
+
+def format_percentage(value, decimals=1):
+    """Format a value as a percentage."""
+    return f"{value * 100:.{decimals}f}%"
 
 
 # ============================================================================
@@ -244,36 +195,37 @@ def show_tag_cloud(max_tags=15):
     sorted_tags = sorted(tag_counts.items(), key=lambda x: x[1], reverse=True)[:max_tags]
     max_count = max(count for _, count in sorted_tags) if sorted_tags else 1
     
-    # ANSI colors for tag cloud gradient
-    tag_colors = [
-        "\033[38;5;196m",  # Red
-        "\033[38;5;202m",  # Orange-Red
-        "\033[38;5;208m",  # Orange
-        "\033[38;5;214m",  # Gold
-        "\033[38;5;220m",  # Yellow
-        "\033[38;5;228m",  # Light Yellow
-        "\033[38;5;15m",   # White
-    ]
-    
-    print(f"\n{header('═' * 50)}")
+    print(f"\n{horizontal_rule()}")
     print(f"{header('  TAG CLOUD')} {muted(f'(top {len(sorted_tags)} tags)')}")
-    print(f"{header('═' * 50)}\n")
+    print(f"{horizontal_rule()}\n")
     
-    for tag, count in sorted_tags:
+    # Group tags by intensity for better visual grouping
+    high_tags = [(t, c) for t, c in sorted_tags if c / max_count > 0.6]
+    med_tags = [(t, c) for t, c in sorted_tags if 0.3 < c / max_count <= 0.6]
+    low_tags = [(t, c) for t, c in sorted_tags if c / max_count <= 0.3]
+    
+    # High intensity
+    for tag, count in high_tags:
         scale = count / max_count
-        color_idx = int(scale * (len(tag_colors) - 1))
-        color = tag_colors[color_idx]
-        
-        if scale > 0.8:
-            size_indicator = "●●●"
-        elif scale > 0.5:
+        color = get_gradient_color(scale, TAG_CLOUD_PALETTE)
+        size_indicator = "●●●"
+        print(f"  {color}{BOLD}{tag}{RESET} {highlight(f'({count})')} {muted(size_indicator)}")
+    
+    if med_tags:
+        print()
+        for tag, count in med_tags:
+            scale = count / max_count
+            color = get_gradient_color(scale, TAG_CLOUD_PALETTE)
             size_indicator = "●●○"
-        elif scale > 0.25:
+            print(f"  {color}{tag}{RESET} ({count}) {muted(size_indicator)}")
+    
+    if low_tags:
+        print()
+        for tag, count in low_tags:
+            scale = count / max_count
+            color = get_gradient_color(scale, TAG_CLOUD_PALETTE)
             size_indicator = "●○○"
-        else:
-            size_indicator = "○○○"
-        
-        print(f"  {color}{tag}{RESET} ({count}) {muted(size_indicator)}")
+            print(f"  {muted(tag)} ({count}) {muted(size_indicator)}")
     
     print(f"\n{muted('Key: ●●● High │ ●●○ Medium │ ●○○ Low │ ○○○ Minimal')}\n")
 
@@ -301,53 +253,67 @@ def show_relationship_graph(max_nodes=10, max_edges=15):
     items_with_activation.sort(key=lambda x: x[1], reverse=True)
     top_items = items_with_activation[:max_nodes]
     
-    edges_shown = 0
-    
-    print(f"\n{header('═' * 50)}")
+    print(f"\n{horizontal_rule()}")
     print(f"{header('  RELATIONSHIP GRAPH')}")
-    print(f"{header('═' * 50)}\n")
+    print(f"{horizontal_rule()}\n")
     
-    # Header row
-    print("    ", end="")
+    # Header row with activation indicators
+    print(f"  {muted('Node')}", end="")
     for slug, act, _ in top_items:
-        short_slug = slug[:8] if len(slug) > 8 else slug
-        print(highlight(short_slug.center(8)), end=" ")
+        short_slug = slug[:6] if len(slug) > 6 else slug
+        act_indicator = "●" if act > 0.5 else "○"
+        act_color = GREEN if act > 0.5 else GRAY
+        print(f" {colorize(short_slug[:5].center(5), act_color)}", end="")
     print()
     
-    # Adjacency matrix
+    # Divider with legend
+    print(f"  {muted('-' * 6)}", end="")
+    for _ in top_items:
+        print(f" {muted(BOX_H * 5)}", end="")
+    print()
+    
+    # Adjacency matrix with better visualization
+    edge_count = 0
     for i, (slug_i, act_i, _) in enumerate(top_items):
-        short_i = slug_i[:8] if len(slug_i) > 8 else slug_i
-        print(f"  {highlight(short_i.ljust(8))}", end=" ")
+        short_i = slug_i[:6] if len(slug_i) > 6 else slug_i
+        act_indicator = "●" if act_i > 0.5 else "○"
+        act_color = GREEN if act_i > 0.5 else GRAY
+        
+        print(f"  {colorize(short_i[:5].ljust(5), act_color)} ", end="")
         
         for j, (slug_j, act_j, _) in enumerate(top_items):
             if i == j:
-                print(muted("■".center(8)), end=" ")
+                print(f"{muted('■')}", end=" ")
             else:
                 item_i = data["items"].get(slug_i, {})
                 item_j = data["items"].get(slug_j, {})
                 tags_i = set(item_i.get("tags", []))
                 tags_j = set(item_j.get("tags", []))
                 
-                if tags_i & tags_j:
-                    strength = len(tags_i & tags_j)
-                    centered = "●".center(8)
+                shared = tags_i & tags_j
+                if shared:
+                    strength = len(shared)
                     if strength >= 3:
-                        print(success(centered), end=" ")
+                        print(f"{success('●')}", end=" ")
                     elif strength >= 2:
-                        print(highlight(centered), end=" ")
+                        print(f"{highlight('●')}", end=" ")
                     else:
-                        print(f"{YELLOW}●{RESET}    ", end=" ")
-                    edges_shown += 1
+                        print(f"{colorize('●', '\033[38;5;214m')}", end=" ")
+                    edge_count += 1
                 else:
-                    print(muted("○".center(8)), end=" ")
+                    print(f"{muted('·')}", end=" ")
         
         print()
         
-        if edges_shown >= max_edges:
+        if edge_count >= max_edges:
+            remaining = len(top_items) - i - 1
+            if remaining > 0:
+                print(f"  {muted(f'... and {remaining} more nodes')}")
             break
     
-    print(f"\n{muted('Legend: ■ Self │ ● Connected │ ○ No connection')}")
-    print(f"{muted('Strength: ●●● Strong │ ●●○ Medium │ ●○○ Weak')}\n")
+    print(f"\n{muted('Legend: ■ Self │ ● Connected │ · No connection')}")
+    print(f"{muted('Node color: ● Active │ ○ Inactive')}")
+    print(f"{muted('Edge strength: ●●● Strong │ ●●○ Medium │ ●○○ Weak')}\n")
 
 
 def show_activation_timeline(limit=10):
@@ -389,7 +355,8 @@ def show_activation_timeline(limit=10):
                     "slug": slug,
                     "last_access": last_dt,
                     "relative": relative,
-                    "access_count": access_count
+                    "access_count": access_count,
+                    "activation": calculate_activation(item, current_time)
                 })
             except Exception:
                 pass
@@ -397,34 +364,50 @@ def show_activation_timeline(limit=10):
     all_accesses.sort(key=lambda x: x["last_access"], reverse=True)
     recent = all_accesses[:limit]
     
-    print(f"\n{header('═' * 50)}")
+    print(f"\n{horizontal_rule()}")
     print(f"{header('  ACTIVATION TIMELINE')} {muted(f'(recent {len(recent)})')}")
-    print(f"{header('═' * 50)}\n")
+    print(f"{horizontal_rule()}\n")
     
     if not recent:
         print(f"  {warning('No access history yet')}")
         return
     
-    for item in recent:
+    # Calculate bar width for sparklines
+    max_count = max(item["access_count"] for item in recent) if recent else 1
+    
+    for idx, item in enumerate(recent):
         slug = item["slug"]
         relative = item["relative"]
         count = item["access_count"]
+        activation = item["activation"]
         
+        # Color based on recency
         if "just now" in relative or "m ago" in relative:
-            color = GREEN
-            marker = "●"
+            marker_color = GREEN
+            marker = "▶"
         elif "h ago" in relative:
-            color = CYAN
-            marker = "◆"
+            marker_color = CYAN
+            marker = "▶"
         elif "d ago" in relative and int(relative.split("d")[0]) <= 2:
-            color = YELLOW
-            marker = "○"
+            marker_color = YELLOW
+            marker = "▶"
         else:
-            color = GRAY
+            marker_color = GRAY
             marker = "○"
         
-        print(f"  {color}{marker}{RESET} {highlight(slug)}")
-        print(f"     {muted('Last:')} {relative} {muted('│ Accesses:')} {count}")
+        # Activation bar
+        act_bar = color_bar(activation, width=15)
+        
+        # Access count visualization
+        count_bar_len = int((count / max_count) * 10)
+        count_bar = f"{CYAN}{'█' * count_bar_len}{GRAY}{'░' * (10 - count_bar_len)}{RESET}"
+        
+        # Row number with leading zero for alignment
+        row_num = f"{idx + 1:02d}"
+        
+        print(f"  {muted(row_num)} {marker_color}{marker}{RESET} {BOLD}{highlight(slug)}{RESET}")
+        print(f"      {muted('Time:')} {relative:>12}  {muted('Count:')} {count_bar} ({count})")
+        print(f"      {muted('Activation:')} {act_bar} {muted(f'{activation:.2f}')}")
         print()
     
     print(f"{muted('Timeline shows most recently accessed memories')}\n")
@@ -446,12 +429,12 @@ def show_dashboard():
     activations = []
     for slug, item in data.get("items", {}).items():
         act = calculate_activation(item, current_time)
-        activations.append(act)
+        activations.append((slug, act, item))
     
-    avg_activation = sum(activations) / len(activations) if activations else 0
-    high_activation = sum(1 for a in activations if a > 0.5)
-    medium_activation = sum(1 for a in activations if 0.25 < a <= 0.5)
-    low_activation = sum(1 for a in activations if a <= 0.25)
+    avg_activation = sum(a[1] for a in activations) / len(activations) if activations else 0
+    high_activation = sum(1 for a in activations if a[1] > 0.5)
+    medium_activation = sum(1 for a in activations if 0.25 < a[1] <= 0.5)
+    low_activation = sum(1 for a in activations if a[1] <= 0.25)
     
     total_accesses = sum(item.get("access_count", 0) for item in data.get("items", {}).values())
     items_never_accessed = sum(1 for item in data.get("items", {}).values() if not item.get("access_times"))
@@ -476,63 +459,103 @@ def show_dashboard():
     if health_score >= 75:
         health_color = GREEN
         health_status = "EXCELLENT"
+        health_emoji = "✨"
     elif health_score >= 50:
         health_color = CYAN
         health_status = "HEALTHY"
+        health_emoji = "💪"
     elif health_score >= 25:
         health_color = YELLOW
         health_status = "FAIR"
+        health_emoji = "⚠️"
     else:
         health_color = RED
         health_status = "NEEDS ATTENTION"
+        health_emoji = "🔴"
     
-    print(f"\n{header('═' * 60)}")
+    print(f"\n{horizontal_rule(BOX_H, 60)}")
     print(f"{header('  MEMORY HEALTH DASHBOARD')}")
-    print(f"{header('═' * 60)}\n")
+    print(f"{horizontal_rule(BOX_H, 60)}\n")
     
-    print(f"  ┌{'─' * 30}┐")
-    print(f"  │ {muted('OVERALL HEALTH:')} {health_color}{health_status}{RESET} {' ' * (16 - len(health_status))}│")
-    print(f"  │ {muted('Score:')} {health_color}{health_score}%{RESET}{' ' * (30 - len(str(health_score)) - 10)}│")
-    print(f"  └{'─' * 30}┘\n")
+    # Health score box with gradient background effect
+    score_bar_len = int(health_score / 5)
+    score_bar = color_bar(health_score / 100, width=20, palette=ACTIVATION_PALETTE)
     
-    print(f"  {header('📊 MEMORY STATS')}")
-    print(f"  {'─' * 40}")
-    print(f"  {muted('Total Memories:')}    {highlight(str(total_items))}")
-    print(f"  {muted('Total Tags:')}       {highlight(str(total_tags))}")
-    print(f"  {muted('Tag Connections:')} {highlight(str(total_edges))}")
-    print(f"  {muted('Total Accesses:')}  {highlight(str(total_accesses))}")
+    print(f"  {BOX_TL}{BOX_H * 32}{BOX_TR}")
+    print(f"  {BOX_V}  {health_emoji} {muted('OVERALL HEALTH:')} {health_color}{health_status:15}{RESET} {BOX_V}")
+    print(f"  {BOX_V}     {muted('Score:')} {score_bar} {health_color}{health_score:>3}%{RESET}    {BOX_V}")
+    print(f"  {BOX_BL}{BOX_H * 32}{BOX_BR}\n")
+    
+    # Stats section
+    print(f"  {header('📊  MEMORY STATS')}")
+    print(f"  {muted(BOX_H * 40)}")
+    print(f"  {CYAN}├{RESET} {muted('Total Memories:')}    {highlight(str(total_items))}")
+    print(f"  {CYAN}├{RESET} {muted('Total Tags:')}       {highlight(str(total_tags))}")
+    print(f"  {CYAN}├{RESET} {muted('Tag Connections:')} {highlight(str(total_edges))}")
+    print(f"  {CYAN}└{RESET} {muted('Total Accesses:')}  {highlight(str(total_accesses))}")
     print()
     
-    print(f"  {header('📈 ACTIVATION DISTRIBUTION')}")
-    print(f"  {'─' * 40}")
+    # Activation distribution with nice bars
+    print(f"  {header('📈  ACTIVATION DISTRIBUTION')}")
+    print(f"  {muted(BOX_H * 40)}")
     
-    bar_width = 30
+    bar_width = 25
     if total_items > 0:
         high_pct = high_activation / total_items
         med_pct = medium_activation / total_items
         low_pct = low_activation / total_items
         
-        high_bar = int(high_pct * bar_width)
-        med_bar = int(med_pct * bar_width)
-        low_bar = int(low_pct * bar_width)
+        high_bar_len = int(high_pct * bar_width)
+        med_bar_len = int(med_pct * bar_width)
+        low_bar_len = int(low_pct * bar_width)
         
-        print(f"  {GREEN}█{RESET} {muted('High (>50%):')}    {high_bar:>2} {GREEN}{'█' * high_bar}{RESET}")
-        print(f"  {YELLOW}█{RESET} {muted('Medium (25-50%):')} {med_bar:>2} {YELLOW}{'█' * med_bar}{RESET}")
-        print(f"  {RED}█{RESET} {muted('Low (<25%):')}     {low_bar:>2} {RED}{'█' * low_bar}{RESET}")
+        # High activation (good - green)
+        bar = f"{GREEN}{'█' * high_bar_len}{GRAY}{'░' * (bar_width - high_bar_len)}{RESET}"
+        print(f"  {GREEN}█{RESET} {muted('High (>50%):')}  {bar} {highlight(f'{high_activation}')}")
+        
+        # Medium activation (warning - yellow)
+        bar = f"{YELLOW}{'█' * med_bar_len}{GRAY}{'░' * (bar_width - med_bar_len)}{RESET}"
+        print(f"  {YELLOW}█{RESET} {muted('Medium (25-50%):')} {bar} {highlight(f'{medium_activation}')}")
+        
+        # Low activation (bad - red)
+        bar = f"{RED}{'█' * low_bar_len}{GRAY}{'░' * (bar_width - low_bar_len)}{RESET}"
+        print(f"  {RED}█{RESET} {muted('Low (<25%):')}   {bar} {highlight(f'{low_activation}')}")
+        
+        # Percentage labels
+        print(f"  {muted('            ')}  {GRAY}0%{' ' * (bar_width - 4)}100%{RESET}")
     else:
         print(f"  {muted('No data available')}")
     
     print()
     
+    # Average metrics
     avg_pagerank = sum(pagerank.values()) / len(pagerank) if pagerank else 0
     
-    print(f"  {header('📉 AVERAGE METRICS')}")
-    print(f"  {'─' * 40}")
-    print(f"  {muted('Avg Activation:')}   {highlight(f'{avg_activation:.2f}')}")
-    print(f"  {muted('PageRank Avg:')}    {highlight(f'{avg_pagerank:.2f}')}")
-    print(f"  {muted('Never Accessed:')}  {warning(f'{items_never_accessed}')}")
+    print(f"  {header('📉  AVERAGE METRICS')}")
+    print(f"  {muted(BOX_H * 40)}")
+    print(f"  {CYAN}├{RESET} {muted('Avg Activation:')}   {highlight(f'{avg_activation:.2f}')}")
+    print(f"  {CYAN}├{RESET} {muted('PageRank Avg:')}    {highlight(f'{avg_pagerank:.2f}')}")
+    print(f"  {CYAN}└{RESET} {muted('Never Accessed:')}  ", end="")
+    if items_never_accessed == 0:
+        print(success(f'{items_never_accessed}'))
+    elif items_never_accessed < total_items * 0.2:
+        print(warning(f'{items_never_accessed}'))
+    else:
+        print(error(f'{items_never_accessed}'))
     
-    print(f"\n{header('═' * 60)}\n")
+    # Top active memories section
+    if activations:
+        print()
+        print(f"  {header('🔥  TOP ACTIVE MEMORIES')}")
+        print(f"  {muted(BOX_H * 40)}")
+        
+        top_5 = sorted(activations, key=lambda x: x[1], reverse=True)[:5]
+        for idx, (slug, act, _) in enumerate(top_5):
+            act_bar = color_bar(act, width=12)
+            rank_emoji = ["🥇", "🥈", "🥉", "4.", "5."][idx]
+            print(f"  {rank_emoji} {highlight(slug[:25]):<25} {act_bar} {act:.2f}")
+    
+    print(f"\n{horizontal_rule(BOX_H, 60)}\n")
 
 
 # ============================================================================

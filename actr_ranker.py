@@ -11,7 +11,9 @@ Unified gateway combining:
 Formula: Final = 0.50×QMD + 0.15×Activation + 0.25×PageRank + 0.10×Relationships
 """
 
+import argparse
 import json
+import logging
 import os
 import re
 import subprocess
@@ -19,8 +21,34 @@ import sys
 import time
 from datetime import datetime, timezone
 from pathlib import Path
+from typing import Any, Dict, List, Optional, Tuple
 
 import yaml
+
+# Import shared utilities
+from memory_utils import (
+    load_activation_log as _utils_load_activation_log,
+    save_activation_log as _utils_save_activation_log,
+    load_tag_graph,
+    load_pagerank_scores,
+    load_tags_from_file,
+    calculate_activation as _utils_calculate_activation,
+    BASE_LEVEL,
+    DECAY_CONSTANT,
+)
+
+# Configure logging
+def setup_logging(debug: bool = False, quiet: bool = False):
+    """Configure logging based on debug/quiet flags."""
+    level = logging.DEBUG if debug else (logging.WARNING if quiet else logging.INFO)
+    logging.basicConfig(
+        level=level,
+        format='%(asctime)s - %(levelname)s - %(message)s',
+        datefmt='%Y-%m-%d %H:%M:%S'
+    )
+    return logging.getLogger(__name__)
+
+logger = logging.getLogger(__name__)
 
 # Try to import SQLite backend
 try:
@@ -32,7 +60,7 @@ try:
     SQLITE_AVAILABLE = is_sqlite_available()
 except ImportError:
     SQLITE_AVAILABLE = False
-    print("Note: SQLite backend not available, using JSON only")
+    logger.warning("SQLite backend not available, using JSON only")
 
 MEMORY_DIR = Path("/home/node/.openclaw/workspace/memory")
 MEMORY_BASE_DIR = Path("/home/node/.openclaw")
@@ -112,7 +140,7 @@ def normalize_query(query):
     return ' '.join(query.lower().strip().split())
 
 
-def get_cached_results(query):
+def get_cached_results(query: str) -> Optional[List[Dict[str, Any]]]:
     """Get cached QMD results if not expired."""
     if not query:
         return None
@@ -132,7 +160,7 @@ def get_cached_results(query):
     return entry["results"]
 
 
-def set_cached_results(query, results):
+def set_cached_results(query: str, results: List[Dict[str, Any]]) -> None:
     """Cache QMD search results."""
     if not query or not results:
         return
@@ -149,7 +177,7 @@ def clear_cache():
     global activation_cache
     activation_cache = None
     query_cache.clear()
-    print("Query cache cleared.")
+    logger.info("Query cache cleared.")
 
 
 # ============================================================================
@@ -368,7 +396,7 @@ def apply_freshness_to_all(current_time=None):
 # IMPROVEMENT 3: FAST/SLOW TIERS
 # ============================================================================
 
-def fast_search(query, max_results=5):
+def fast_search(query: str, max_results: int = 5) -> List[Dict[str, Any]]:
     """
     Fast tier: Just QMD semantic search (no activation/rank computation).
     
@@ -469,7 +497,7 @@ RETRIEVE_KEYWORDS = _config.get("pre_retrieval", {}).get("keywords", [
 RETRIEVE_MIN_LENGTH = _config.get("pre_retrieval", {}).get("min_length", 3)  # Minimum query length to consider
 
 
-def load_activation_log():
+def load_activation_log() -> Dict[str, Any]:
     """Load the activation log with SQLite as primary source."""
     global activation_cache
     
@@ -525,7 +553,7 @@ def load_activation_log():
             }
             return activation_cache
         except Exception as e:
-            print(f"Warning: SQLite load failed ({e}), falling back to JSON")
+            logger.warning(f"SQLite load failed ({e}), falling back to JSON")
     
     # Fallback to JSON
     try:
@@ -535,9 +563,9 @@ def load_activation_log():
                 activation_cache = data
                 return data
     except json.JSONDecodeError as e:
-        print(f"Warning: activation-log.json is corrupt: {e}")
+        logger.warning(f"activation-log.json is corrupt: {e}")
     except Exception as e:
-        print(f"Warning: Could not load activation-log: {e}")
+        logger.warning(f"Could not load activation-log: {e}")
     
     activation_cache = {"version": "1.0", "last_updated": None, "items": {}}
     return activation_cache
@@ -568,12 +596,12 @@ def save_activation_log(data):
             conn.commit()
             conn.close()
         except Exception as e:
-            print(f"Warning: Failed to sync to SQLite: {e}")
+            logger.warning(f"Failed to sync to SQLite: {e}")
     
     global activation_cache
     activation_cache = data
 
-def calculate_activation(item_data, current_time):
+def calculate_activation(item_data: Dict[str, Any], current_time: datetime) -> float:
     """
     Calculate ACT-R style activation with freshness-aware decay:
     A = B + Σ(Sᵢ / Dᵢ) - F
@@ -583,6 +611,9 @@ def calculate_activation(item_data, current_time):
     Now with status-aware decay:
     - Resolved problems >30 days decay 2x faster
     - Dead-end problems >60 days decay 3x faster
+    
+    Returns:
+        float: Activation score clamped between 0.0 and 1.0
     """
     access_times = item_data.get("access_times", [])
     if not access_times:
@@ -610,8 +641,13 @@ def calculate_activation(item_data, current_time):
     return max(0.0, min(1.0, activation))  # Clamp to 0-1
 
 
-def get_related_by_tags(slug, data):
-    """Get slugs that share tags with the given slug (tag priming)."""
+def get_related_by_tags(slug: str, data: Dict[str, Any]) -> List[Tuple[str, int]]:
+    """
+    Get slugs that share tags with the given slug (tag priming).
+    
+    Returns:
+        List of tuples (slug, shared_tag_count) sorted by shared tags
+    """
     if slug not in data["items"]:
         return []
     
@@ -675,10 +711,13 @@ def load_tags_from_file(path):
     return []
 
 
-def record_access_with_priming(slug):
+def record_access_with_priming(slug: str) -> float:
     """
     Record access and boost related problems that share tags.
     This is tag priming - inspired by Hopfield networks / associative memory.
+    
+    Returns:
+        float: The activation score of the accessed problem
     """
     data = load_activation_log()
     current_time = datetime.now(timezone.utc)
@@ -714,7 +753,7 @@ def record_access_with_priming(slug):
             current = data["items"][related_slug].get("activation", BASE_LEVEL)
             boost = priming_boost * shared_count
             data["items"][related_slug]["activation"] = min(1.0, current + boost)
-            print(f"  🔗 Primed {related_slug}: +{boost:.3f} (shared tags: {shared_count})")
+            logger.debug(f"Primed {related_slug}: +{boost:.3f} (shared tags: {shared_count})")
     
     save_activation_log(data)
     
@@ -723,13 +762,18 @@ def record_access_with_priming(slug):
         try:
             db_record_access(slug)
         except Exception as e:
-            print(f"Warning: Failed to record access in SQLite: {e}")
+            logger.warning(f"Failed to record access in SQLite: {e}")
     
     return data["items"][slug]["activation"]
 
 
-def record_access(slug):
-    """Record that a problem was accessed."""
+def record_access(slug: str) -> float:
+    """
+    Record that a problem was accessed.
+    
+    Returns:
+        float: The new activation score
+    """
     data = load_activation_log()
     current_time = datetime.now(timezone.utc)
     
@@ -777,8 +821,17 @@ def sanitize_query(query):
     return sanitized
 
 
-def search_qmd(query, max_results=10):
-    """Run QMD search with caching for 5-20x speedup on repeated queries."""
+def search_qmd(query: str, max_results: int = 10) -> List[Dict[str, Any]]:
+    """
+    Run QMD search with caching for 5-20x speedup on repeated queries.
+    
+    Args:
+        query: Search query string
+        max_results: Maximum number of results to return
+        
+    Returns:
+        List of dicts with slug, path, and qmd_score
+    """
     # Check cache first
     cached = get_cached_results(query)
     if cached is not None:
@@ -820,56 +873,17 @@ def search_qmd(query, max_results=10):
         set_cached_results(query, results)
         return results[:max_results]
     except FileNotFoundError:
-        print("Warning: qmd command not found")
+        logger.warning("qmd command not found")
         return []
     except subprocess.TimeoutExpired:
-        print(f"Warning: qmd search timed out for query: {query}")
+        logger.warning(f"qmd search timed out for query: {query}")
         return []
     except Exception as e:
-        print(f"Warning: QMD search error: {e}")
+        logger.warning(f"QMD search error: {e}")
         return []  # Graceful degradation: return empty results
 
 
-def combined_search(query, max_results=5):
-    """
-    Legacy: Parallel pipeline: QMD + ACT-R activation
-    
-    Returns results ranked by: w1 * qmd_score + w2 * activation
-    """
-    data = load_activation_log()
-    current_time = datetime.now(timezone.utc)
-    
-    # Get QMD results
-    qmd_results = search_qmd(query, max_results=10)
-    
-    # Combine with activation scores
-    combined = []
-    for item in qmd_results:
-        slug = item["slug"]
-        
-        if slug in data["items"]:
-            activation = calculate_activation(data["items"][slug], current_time)
-        else:
-            activation = BASE_LEVEL
-        
-        # Weighted combination (60% QMD, 40% activation)
-        final_score = 0.6 * item["qmd_score"] + 0.4 * activation
-        
-        combined.append({
-            "slug": slug,
-            "path": item["path"],
-            "qmd_score": item["qmd_score"],
-            "activation": activation,
-            "final_score": final_score
-        })
-    
-    # Sort by final score
-    combined.sort(key=lambda x: x["final_score"], reverse=True)
-    
-    return combined[:max_results]
-
-
-def load_tag_graph():
+def load_tag_graph() -> Dict[str, Any]:
     """Load the tag graph."""
     if TAG_GRAPH_PATH.exists():
         with open(TAG_GRAPH_PATH) as f:
@@ -877,7 +891,7 @@ def load_tag_graph():
     return {"nodes": {}, "edges": [], "tag_index": {}}
 
 
-def load_pagerank_scores():
+def load_pagerank_scores() -> Dict[str, float]:
     """Load PageRank scores with error handling."""
     try:
         if PAGERANK_SCORES_PATH.exists():
@@ -885,18 +899,21 @@ def load_pagerank_scores():
                 data = json.load(f)
                 return data.get("scores", {})
     except json.JSONDecodeError as e:
-        print(f"Warning: pagerank-scores.json is corrupt: {e}")
+        logger.warning(f"pagerank-scores.json is corrupt: {e}")
     except Exception as e:
-        print(f"Warning: Could not load pagerank-scores: {e}")
+        logger.warning(f"Could not load pagerank-scores: {e}")
     return {}
 
 
-def get_relationship_score(slug, problem_path=None):
+def get_relationship_score(slug: str, problem_path: Optional[str] = None) -> float:
     """
     Check if problem has explicit relationships to query-related problems.
     
     Looks for ## Relationships section in problem file.
     Returns normalized score (0-1) based on number of relationships.
+    
+    Returns:
+        float: Relationship score between 0.0 and 1.0
     """
     if problem_path is None:
         problem_path = f"memory/problems/{slug}.md"
@@ -959,7 +976,7 @@ def get_relationship_score(slug, problem_path=None):
         return 0.0
 
 
-def unified_search(query, max_results=5):
+def unified_search(query: str, max_results: int = 5) -> List[Dict[str, Any]]:
     """
     Unified search: QMD + Activation + PageRank + Relationships
     
@@ -1048,37 +1065,76 @@ def unified_search(query, max_results=5):
 def main():
     import sys
     
-    if len(sys.argv) < 2:
-        print("Usage: actr_ranker.py <query>")
-        print("       actr_ranker.py --access <slug>")
-        print("       actr_ranker.py --list")
-        sys.exit(1)
+    parser = argparse.ArgumentParser(description="ACT-R Style Memory Ranker")
+    parser.add_argument("query", nargs="?", help="Search query")
+    parser.add_argument("--access", metavar="SLUG", help="Record access for a problem slug")
+    parser.add_argument("--list", action="store_true", help="List all problems with activation scores")
+    parser.add_argument("--json", action="store_true", help="Output results as JSON")
+    parser.add_argument("--debug", action="store_true", help="Enable debug logging")
+    parser.add_argument("-q", "--quiet", action="store_true", help="Suppress logging output")
     
-    if sys.argv[1] == "--access":
-        slug = sys.argv[2]
-        print(f"Recording access for {slug} (with tag priming)...")
+    args = parser.parse_args()
+    
+    # Setup logging
+    logger = setup_logging(debug=args.debug, quiet=args.quiet)
+    
+    if args.access:
+        slug = args.access
+        logger.info(f"Recording access for {slug} (with tag priming)...")
         activation = record_access_with_priming(slug)
-        print(f"Recorded access for {slug}, activation: {activation:.3f}")
+        logger.info(f"Recorded access for {slug}, activation: {activation:.3f}")
+        return
     
-    elif sys.argv[1] == "--list":
+    if args.list:
         data = load_activation_log()
         current_time = datetime.now(timezone.utc)
-        for slug, item in data["items"].items():
-            act = calculate_activation(item, current_time)
-            print(f"{slug}: activation={act:.3f}, accesses={item['access_count']}")
+        
+        if args.json:
+            results = []
+            for slug, item in data["items"].items():
+                act = calculate_activation(item, current_time)
+                results.append({
+                    "slug": slug,
+                    "activation": act,
+                    "access_count": item.get("access_count", 0)
+                })
+            print(json.dumps(results, indent=2))
+        else:
+            for slug, item in data["items"].items():
+                act = calculate_activation(item, current_time)
+                logger.info(f"{slug}: activation={act:.3f}, accesses={item['access_count']}")
+        return
     
-    else:
-        query = " ".join(sys.argv[1:])
-        results = unified_search(query)
-        
-        print(f"\n=== Unified Search: '{query}' ===\n")
-        print(f"Weights: QMD={WEIGHT_QMD} | Activation={WEIGHT_ACTIVATION} | PageRank={WEIGHT_PAGERANK} | Relationships={WEIGHT_RELATIONSHIPS}\n")
-        
-        for i, r in enumerate(results, 1):
-            print(f"{i}. {r['slug']}")
-            print(f"   QMD: {r['qmd_score']:.2f} | Activation: {r['activation']:.2f} | PageRank: {r['pagerank']:.2f} | Relationships: {r['relationship_score']:.2f} | Final: {r['final_score']:.2f}")
-            print(f"   Path: {r['path']}")
-            print()
+    if not args.query:
+        parser.print_help()
+        sys.exit(1)
+    
+    query = args.query
+    results = unified_search(query)
+    
+    if args.json:
+        # Output as JSON
+        output = {
+            "query": query,
+            "weights": {
+                "qmd": WEIGHT_QMD,
+                "activation": WEIGHT_ACTIVATION,
+                "pagerank": WEIGHT_PAGERANK,
+                "relationships": WEIGHT_RELATIONSHIPS
+            },
+            "results": results
+        }
+        print(json.dumps(output, indent=2))
+        return
+    
+    print(f"\n=== Unified Search: '{query}' ===\n")
+    print(f"Weights: QMD={WEIGHT_QMD} | Activation={WEIGHT_ACTIVATION} | PageRank={WEIGHT_PAGERANK} | Relationships={WEIGHT_RELATIONSHIPS}\n")
+    
+    for i, r in enumerate(results, 1):
+        print(f"{i}. {r['slug']}")
+        print(f"   QMD: {r['qmd_score']:.2f} | Activation: {r['activation']:.2f} | PageRank: {r['pagerank']:.2f} | Relationships: {r['relationship_score']:.2f} | Final: {r['final_score']:.2f}")
+        print(f"   Path: {r['path']}")
+        print()
 
 
 if __name__ == "__main__":

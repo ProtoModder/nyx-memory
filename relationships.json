@@ -1,0 +1,271 @@
+{
+  "description": "Relationships between problems in memory/problems/",
+  "total_problems": 37,
+  "relationships": {
+    "act-r-cognitive-architecture": {
+      "related": [
+        "common-model-cognition",
+        "spreading-activation",
+        "retrieval-vs-activation",
+        "passive-ai-memory-architecture",
+        "cognitive-architecture-real-time-performance"
+      ]
+    },
+    "agent-memory-architecture": {
+      "related": [
+        "mem0-ai-memory",
+        "letta-memgpt",
+        "zep-graphiti"
+      ]
+    },
+    "arxiv-agent-memory-papers": {
+      "related": [
+        "mem0-ai-memory",
+        "memory-augmented-llms"
+      ]
+    },
+    "brave-searxng-integration": {
+      "related": [
+        "searxng-json-format"
+      ]
+    },
+    "cognitive-architecture-real-time-performance": {
+      "related": [
+        "common-model-cognition",
+        "soar-cognitive-architecture",
+        "act-r-cognitive-architecture"
+      ]
+    },
+    "common-model-cognition": {
+      "related": [
+        "soar-cognitive-architecture",
+        "act-r-cognitive-architecture",
+        "soar-vs-actr-use-case-selection",
+        "metacognition-without-executive-module"
+      ]
+    },
+    "dia-voice-server-performance": {
+      "related": [
+        "workflow-tts-piper",
+        "tts-voice-setup"
+      ]
+    },
+    "hopfield-networks": {
+      "related": [
+        "spreading-activation",
+        "video-brain-memory-retrieval",
+        "video-titans-integrated-llm-memory"
+      ]
+    },
+    "letta-memgpt": {
+      "related": [
+        "mem0-ai-memory",
+        "zep-graphiti",
+        "agent-memory-architecture"
+      ]
+    },
+    "mem0-ai-memory": {
+      "related": [
+        "letta-memgpt",
+        "zep-graphiti",
+        "mem0-implementation-details",
+        "passive-ai-memory-architecture",
+        "retrieval-vs-activation"
+      ]
+    },
+    "mem0-implementation-details": {
+      "related": [
+        "mem0-ai-memory"
+      ]
+    },
+    "memory-augmented-llms": {
+      "related": [
+        "arxiv-agent-memory-papers",
+        "passive-ai-memory-architecture"
+      ]
+    },
+    "memory-consolidation": {
+      "related": [
+        "passive-ai-memory-architecture",
+        "hopfield-networks"
+      ]
+    },
+    "metacognition-without-executive-module": {
+      "related": [
+        "common-model-cognition",
+        "soar-cognitive-architecture",
+        "act-r-cognitive-architecture"
+      ]
+    },
+    "passive-ai-memory-architecture": {
+      "related": [
+        "mem0-ai-memory",
+        "zep-graphiti",
+        "retrieval-vs-activation",
+        "act-r-cognitive-architecture"
+      ]
+    },
+    "puppeteer-stealth-bypass": {
+      "related": []
+    },
+    "retrieval-vs-activation": {
+      "related": [
+        "passive-ai-memory-architecture",
+        "act-r-cognitive-architecture",
+        "mem0-ai-memory"
+      ]
+    },
+    "searxng-json-format": {
+      "related": [
+        "brave-searxng-integration"
+      ]
+    },
+    "soar-cognitive-architecture": {
+      "related": [
+        "common-model-cognition",
+        "soar-vs-actr-use-case-selection",
+        "cognitive-architecture-real-time-performance",
+        "video-cognitive-architectures-soar-actr"
+      ]
+    },
+    "soar-vs-actr-use-case-selection": {
+      "related": [
+        "common-model-cognition",
+        "soar-cognitive-architecture",
+        "act-r-cognitive-architecture"
+      ]
+    },
+    "spreading-activation": {
+      "related": [
+        "act-r-cognitive-architecture",
+        "hopfield-networks",
+        "zep-graphiti"
+      ]
+    },
+    "tts-voice-setup": {
+      "related": [
+        "workflow-tts-piper",
+        "workflow-stt-faster-whisper"
+      ]
+    },
+    "video-brain-memory-retrieval": {
+      "related": [
+        "hopfield-networks",
+        "video-titans-integrated-llm-memory"
+      ]
+    },
+    "video-cognitive-architectures-soar-actr": {
+      "related": [
+        "soar-cognitive-architecture",
+        "act-r-cognitive-architecture",
+        "common-model-cognition",
+        "video-cognitive-workload-prediction"
+      ]
+    },
+    "video-cognitive-workload-prediction": {
+      "related": [
+        "video-cognitive-architectures-soar-actr",
+        "act-r-cognitive-architecture"
+      ]
+    },
+    "video-openclaw-fulltime-employee": {
+      "related": [
+        "agent-memory-architecture"
+      ]
+    },
+    "video-titans-integrated-llm-memory": {
+      "related": [
+        "video-brain-memory-retrieval",
+        "hopfield-networks"
+      ]
+    },
+    "weather-cron-setup": {
+      "related": []
+    },
+    "workflow-docker-optimization": {
+      "related": []
+    },
+    "workflow-ollama-vision-llava": {
+      "related": [
+        "workflow-pdf-ocr-llava"
+      ]
+    },
+    "workflow-pdf-ocr-llava": {
+      "related": [
+        "workflow-ollama-vision-llava"
+      ]
+    },
+    "workflow-stt-faster-whisper": {
+      "related": [
+        "tts-voice-setup",
+        "workflow-tts-piper"
+      ]
+    },
+    "workflow-system-info-rocm": {
+      "related": [
+        "dia-voice-server-performance"
+      ]
+    },
+    "workflow-tts-piper": {
+      "related": [
+        "tts-voice-setup",
+        "workflow-youtube-transcript"
+      ]
+    },
+    "workflow-youtube-transcript": {
+      "related": [
+        "workflow-tts-piper",
+        "video-cognitive-architectures-soar-actr",
+        "video-brain-memory-retrieval",
+        "video-titans-integrated-llm-memory"
+      ]
+    },
+    "workspace-organization": {
+      "related": []
+    },
+    "zep-graphiti": {
+      "related": [
+        "mem0-ai-memory",
+        "letta-memgpt",
+        "passive-ai-memory-architecture",
+        "spreading-activation"
+      ]
+    }
+  },
+  "clusters": {
+    "cognitive-architectures": [
+      "act-r-cognitive-architecture",
+      "soar-cognitive-architecture",
+      "common-model-cognition",
+      "soar-vs-actr-use-case-selection",
+      "metacognition-without-executive-module",
+      "cognitive-architecture-real-time-performance"
+    ],
+    "ai-memory-systems": [
+      "mem0-ai-memory",
+      "letta-memgpt",
+      "zep-graphiti",
+      "passive-ai-memory-architecture",
+      "retrieval-vs-activation",
+      "agent-memory-architecture"
+    ],
+    "video-transcripts": [
+      "video-cognitive-architectures-soar-actr",
+      "video-cognitive-workload-prediction",
+      "video-brain-memory-retrieval",
+      "video-titans-integrated-llm-memory",
+      "workflow-youtube-transcript"
+    ],
+    "media-workflows": [
+      "workflow-tts-piper",
+      "workflow-stt-faster-whisper",
+      "tts-voice-setup",
+      "workflow-ollama-vision-llava",
+      "workflow-pdf-ocr-llava"
+    ],
+    "search-integrations": [
+      "brave-searxng-integration",
+      "searxng-json-format"
+    ]
+  }
+}

@@ -12,106 +12,50 @@ Features:
 - Clear cache
 """
 
-import json
-import os
 import subprocess
-import sys
 from datetime import datetime, timezone
 from pathlib import Path
 
-# ANSI Colors (from actr_ranker.py)
-RESET = "\033[0m"
-BOLD = "\033[1m"
-GREEN = "\033[92m"
-YELLOW = "\033[93m"
-RED = "\033[91m"
-BLUE = "\033[94m"
-CYAN = "\033[96m"
-GRAY = "\033[90m"
-
-
-def colorize(text, color):
-    return f"{color}{text}{RESET}"
-
-
-def success(text):
-    return colorize(text, GREEN)
-
-
-def warning(text):
-    return colorize(text, YELLOW)
-
-
-def error(text):
-    return colorize(text, RED)
-
-
-def header(text):
-    return colorize(f"{BOLD}{text}", BLUE)
-
-
-def highlight(text):
-    return colorize(text, CYAN)
-
-
-def muted(text):
-    return colorize(text, GRAY)
-
+# Import shared utilities
+import memory_utils
+from memory_utils import (
+    load_activation_log,
+    save_activation_log,
+    load_tags_from_file,
+    get_status_from_file,
+    calculate_activation,
+    BASE_LEVEL,
+    # ANSI colors
+    colorize,
+    success,
+    warning,
+    error,
+    header,
+    highlight,
+    muted,
+    RESET,
+    BOLD,
+    GREEN,
+    YELLOW,
+    RED,
+    BLUE,
+    CYAN,
+    GRAY,
+)
 
 # Configuration
-MEMORY_BASE_DIR = Path(os.environ.get("MEMORY_BASE_DIR", "/home/node/.openclaw"))
-ACTIVATION_LOG = MEMORY_BASE_DIR / "memory/activation-log.json"
-MEMORY_DIR = MEMORY_BASE_DIR / "workspace"
+MEMORY_DIR = Path("/home/node/.openclaw/workspace")
 
 
 def clear_screen():
     """Clear the terminal screen."""
+    import os
     os.system('clear' if os.name == 'posix' else 'cls')
 
 
 def pause():
     """Wait for user input."""
     input(muted("\nPress Enter to continue..."))
-
-
-def load_activation_log():
-    """Load the activation log."""
-    if ACTIVATION_LOG.exists():
-        with open(ACTIVATION_LOG) as f:
-            return json.load(f)
-    return {"version": "1.0", "last_updated": None, "items": {}}
-
-
-def save_activation_log(data):
-    """Save the activation log."""
-    data["last_updated"] = datetime.now(timezone.utc).isoformat()
-    with open(ACTIVATION_LOG, "w") as f:
-        json.dump(data, f, indent=2)
-
-
-def calculate_activation(item_data, current_time):
-    """Calculate ACT-R style activation."""
-    BASE_LEVEL = 0.3
-    access_times = item_data.get("access_times", [])
-    if not access_times:
-        return BASE_LEVEL
-    
-    last_access = datetime.fromisoformat(access_times[-1].replace("Z", "+00:00"))
-    seconds_ago = (current_time - last_access).total_seconds()
-    recency = 1.0 / ((seconds_ago / 3600) + 1)
-    
-    frequency = len(access_times)
-    frequency_bonus = 0.1 * (frequency - 1)
-    
-    age = (current_time - datetime.fromisoformat(
-        item_data["created"].replace("Z", "+00:00")
-    )).total_seconds() / 86400
-    
-    DECAY_CONSTANT = 0.5
-    decay = DECAY_CONSTANT * (age ** 0.5)
-    
-    activation = BASE_LEVEL + recency * 0.4 + frequency_bonus - decay
-    return max(0.0, min(1.0, activation))
 
 
 def record_access(slug):
@@ -187,32 +131,15 @@ def get_problem_content(slug):
 
 
 def get_tags_from_file(slug):
-    """Extract tags from a problem file."""
-    content = get_problem_content(slug)
-    if not content:
-        return []
-    
-    for line in content.split('\n'):
-        line = line.strip()
-        if line.startswith('**Tags:**'):
-            tags_str = line.replace('**Tags:**', '').strip()
-            if tags_str:
-                return [t.strip().rstrip(',') for t in tags_str.split() if t.strip()]
-    return []
+    """Extract tags from a problem file (wrapper for memory_utils)."""
+    path = f"memory/problems/{slug}.md"
+    return memory_utils.load_tags_from_file(path)
 
 
 def get_status_from_file(slug):
-    """Extract status from a problem file."""
-    content = get_problem_content(slug)
-    if not content:
-        return "unknown"
-    
-    for line in content.split('\n'):
-        line = line.strip()
-        if line.startswith('**Status:**'):
-            status = line.replace('**Status:**', '').strip().lower()
-            return status
-    return "unknown"
+    """Extract status from a problem file (wrapper for memory_utils)."""
+    path = f"memory/problems/{slug}.md"
+    return memory_utils.get_status_from_file(path)
 
 
 def clear_cache():
