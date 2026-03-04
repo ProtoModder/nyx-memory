@@ -14,6 +14,41 @@ actr:
   decay_constant: 0.5
   spreading_strength: 0.2
 
+# Freshness/aging parameters (NEW)
+freshness:
+  resolved_days: 30        # Days after which resolved problems decay faster
+  dead_end_days: 60         # Days after which dead-end problems can be archived
+  resolved_decay_multiplier: 2.0   # Extra decay for resolved problems past threshold
+  dead_end_decay_multiplier: 3.0   # Extra decay for dead-end problems
+
+# Pre-retrieval check parameters (NEW)
+pre_retrieval:
+  min_length: 3            # Minimum query length to consider
+  keywords:
+    - problem
+    - solution
+    - fix
+    - error
+    - bug
+    - issue
+    - task
+    - how
+    - why
+    - implement
+    - configure
+    - setup
+    - build
+    - create
+    - find
+    - remember
+    - worked
+    - tried
+    - before
+    - previous
+    - past
+    - learned
+    - documented
+
 # Paths (relative to memory directory)
 paths:
   activation_log: activation-log.json

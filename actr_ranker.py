@@ -38,6 +38,290 @@ def load_config():
 # Load config
 _config = load_config()
 
+
+# ============================================================================
+# IMPROVEMENT 1: PRE-RETRIEVAL CHECK
+# ============================================================================
+
+def should_retrieve_memory(query):
+    """
+    Decide if we need to search memory for this query.
+    
+    Uses a simple heuristic: if query contains problem/solution/task keywords,
+    it's likely the user is asking about something we might have documented.
+    
+    Args:
+        query: The user's search query string
+        
+    Returns:
+        bool: True if memory retrieval is likely useful, False otherwise
+    """
+    if not query or len(query.strip()) < RETRIEVE_MIN_LENGTH:
+        return False
+    
+    query_lower = query.lower()
+    
+    # Check if query contains any retrieval-triggering keywords
+    for keyword in RETRIEVE_KEYWORDS:
+        if keyword in query_lower:
+            return True
+    
+    # Also return True for exact slug matches (user might be asking about a specific problem)
+    # This handles cases like "what about the oauth bug?" where no keyword is present
+    data = load_activation_log()
+    for slug in data.get("items", {}).keys():
+        if slug.replace("-", " ") in query_lower or slug.replace("_", " ") in query_lower:
+            return True
+    
+    return False
+
+
+def get_retrieval_tier(query, force_deep=False):
+    """
+    Determine which retrieval tier to use for a query.
+    
+    Tiers:
+        - 'fast': Just QMD semantic search (no activation/rank computation)
+        - 'deep': Full unified search (QMD + Activation + PageRank + Relationships)
+    
+    Args:
+        query: The search query
+        force_deep: If True, always use deep search
+        
+    Returns:
+        str: 'fast' or 'deep'
+    """
+    # Short/simple queries get fast tier
+    if not force_deep and len(query.split()) <= 2:
+        return 'fast'
+    
+    # Complex queries get deep tier
+    return 'deep'
+
+
+# ============================================================================
+# IMPROVEMENT 2: MEMORY FRESHNESS & AGING
+# ============================================================================
+
+def get_problem_status(slug, data=None):
+    """
+    Get the status of a problem from its markdown file.
+    
+    Args:
+        slug: Problem slug
+        data: Optional pre-loaded activation log
+        
+    Returns:
+        str: 'open', 'in-progress', 'resolved', 'dead-end', or 'unknown'
+    """
+    if data is None:
+        data = load_activation_log()
+    
+    if slug not in data["items"]:
+        return "unknown"
+    
+    item = data["items"][slug]
+    path = item.get("path", f"memory/problems/{slug}.md")
+    
+    try:
+        full_path = Path("/home/node/.openclaw/workspace") / path
+        if not full_path.exists():
+            return "unknown"
+        
+        content = full_path.read_text()
+        
+        # Look for **Status:** line
+        for line in content.split('\n'):
+            line = line.strip()
+            if line.startswith('**Status:**'):
+                status = line.replace('**Status:**', '').strip().lower()
+                # Normalize status values
+                if status in ['open', 'in-progress', 'in_progress', 'resolved', 'dead-end', 'dead_end']:
+                    return status.replace('_', '-')
+                return "unknown"
+    except Exception:
+        pass
+    
+    return "unknown"
+
+
+def calculate_freshness_decay(item_data, current_time):
+    """
+    Calculate decay with status-aware aging.
+    
+    - If problem is "resolved" for >30 days -> reduce activation faster
+    - If problem is "dead-end" -> can archive (higher decay)
+    
+    Args:
+        item_data: Problem item from activation log
+        current_time: Current datetime
+        
+    Returns:
+        float: Additional decay multiplier based on status and age
+    """
+    slug = item_data.get("slug", "")
+    status = get_problem_status(slug)
+    
+    if status == "unknown":
+        return 1.0  # No extra decay
+    
+    # Get days since last update
+    created = item_data.get("created", "")
+    if not created:
+        return 1.0
+    
+    try:
+        created_dt = datetime.fromisoformat(created.replace("Z", "+00:00"))
+        days_old = (current_time - created_dt).total_seconds() / 86400
+    except Exception:
+        return 1.0
+    
+    # Apply status-based decay multipliers
+    if status == "resolved" and days_old > FRESHNESS_RESOLVED_DAYS:
+        return FRESHNESS_RESOLVED_DECAY_MULTIPLIER
+    elif status == "dead-end" and days_old > FRESHNESS_DEAD_END_DAYS:
+        return FRESHNESS_DEAD_END_DECAY_MULTIPLIER
+    
+    return 1.0  # Normal decay
+
+
+def apply_freshness_to_all(current_time=None):
+    """
+    Apply freshness-aware decay to all problems in activation log.
+    
+    This can be run periodically to update decay rates based on problem status.
+    
+    Args:
+        current_time: Optional datetime, defaults to now
+        
+    Returns:
+        dict: Summary of changes made
+    """
+    if current_time is None:
+        current_time = datetime.now(timezone.utc)
+    
+    data = load_activation_log()
+    
+    resolved_decayed = 0
+    dead_end_decayed = 0
+    archived = 0
+    
+    for slug, item in data["items"].items():
+        status = get_problem_status(slug, data)
+        
+        if status == "resolved":
+            # Check if past threshold
+            created = item.get("created", "")
+            if created:
+                try:
+                    created_dt = datetime.fromisoformat(created.replace("Z", "+00:00"))
+                    days_old = (current_time - created_dt).total_seconds() / 86400
+                    if days_old > FRESHNESS_RESOLVED_DAYS:
+                        # Apply extra decay
+                        item["freshness_decay"] = FRESHNESS_RESOLVED_DECAY_MULTIPLIER
+                        resolved_decayed += 1
+                except Exception:
+                    pass
+        
+        elif status == "dead-end":
+            created = item.get("created", "")
+            if created:
+                try:
+                    created_dt = datetime.fromisoformat(created.replace("Z", "+00:00"))
+                    days_old = (current_time - created_dt).total_seconds() / 86400
+                    if days_old > FRESHNESS_DEAD_END_DAYS:
+                        # Mark for archiving
+                        item["archival_candidate"] = True
+                        archived += 1
+                        dead_end_decayed += 1
+                except Exception:
+                    pass
+    
+    if resolved_decayed > 0 or dead_end_decayed > 0:
+        save_activation_log(data)
+    
+    return {
+        "resolved_decayed": resolved_decayed,
+        "dead_end_decayed": dead_end_decayed,
+        "archived": archived
+    }
+
+
+# ============================================================================
+# IMPROVEMENT 3: FAST/SLOW TIERS
+# ============================================================================
+
+def fast_search(query, max_results=5):
+    """
+    Fast tier: Just QMD semantic search (no activation/rank computation).
+    
+    Use for quick, simple queries where speed matters more than precision.
+    
+    Args:
+        query: Search query
+        max_results: Maximum results to return
+        
+    Returns:
+        list: Results with just slug, path, and qmd_score
+    """
+    qmd_results = search_qmd(query, max_results=max_results)
+    
+    # Return simplified results
+    return [
+        {
+            "slug": r["slug"],
+            "path": r["path"],
+            "qmd_score": r["qmd_score"]
+        }
+        for r in qmd_results
+    ]
+
+
+def tiered_search(query, max_results=5, force_deep=False):
+    """
+    Tiered retrieval: chooses fast or deep based on query complexity.
+    
+    This is the main entry point that replaces unified_search for most use cases.
+    
+    Args:
+        query: Search query
+        max_results: Maximum results to return
+        force_deep: If True, always use deep search
+        
+    Returns:
+        dict: {
+            "tier": "fast" or "deep",
+            "results": [...],
+            "retrieval_needed": bool
+        }
+    """
+    # First check if we should retrieve at all
+    retrieval_needed = should_retrieve_memory(query)
+    
+    if not retrieval_needed:
+        return {
+            "tier": "none",
+            "results": [],
+            "retrieval_needed": False,
+            "reason": "query_not_memory_related"
+        }
+    
+    # Determine tier
+    tier = get_retrieval_tier(query, force_deep=force_deep)
+    
+    if tier == "fast":
+        return {
+            "tier": "fast",
+            "results": fast_search(query, max_results),
+            "retrieval_needed": True
+        }
+    else:
+        return {
+            "tier": "deep",
+            "results": unified_search(query, max_results),
+            "retrieval_needed": True
+        }
+
 # Weights for unified search (optimized for recall)
 # QMD dominates for semantic recall, other signals provide tie-breaking
 WEIGHT_QMD = _config.get("weights", {}).get("qmd", 0.50)          # Semantic similarity - primary recall signal
@@ -52,6 +336,20 @@ EXACT_MATCH_BONUS_DEFAULT = _config.get("weights", {}).get("exact_match_bonus", 
 BASE_LEVEL = _config.get("actr", {}).get("base_level", 0.3)  # B: base-level activation
 DECAY_CONSTANT = _config.get("actr", {}).get("decay_constant", 0.5)  # F: forgetting constant
 SPREADING_STRENGTH = _config.get("actr", {}).get("spreading_strength", 0.2)  # S: strength of spreading activation
+
+# Freshness/aging parameters
+FRESHNESS_RESOLVED_DAYS = _config.get("freshness", {}).get("resolved_days", 30)  # Days after which resolved problems decay faster
+FRESHNESS_DEAD_END_DAYS = _config.get("freshness", {}).get("dead_end_days", 60)  # Days after which dead-end problems can be archived
+FRESHNESS_RESOLVED_DECAY_MULTIPLIER = _config.get("freshness", {}).get("resolved_decay_multiplier", 2.0)  # Extra decay for resolved problems
+FRESHNESS_DEAD_END_DECAY_MULTIPLIER = _config.get("freshness", {}).get("dead_end_decay_multiplier", 3.0)  # Extra decay for dead-end problems
+
+# Pre-retrieval check parameters
+RETRIEVE_KEYWORDS = _config.get("pre_retrieval", {}).get("keywords", [
+    "problem", "solution", "fix", "error", "bug", "issue", "task", "how", "why",
+    "implement", "configure", "setup", "build", "create", "find", "remember",
+    "worked", "tried", "before", "previous", "past", "learned", "documented"
+])
+RETRIEVE_MIN_LENGTH = _config.get("pre_retrieval", {}).get("min_length", 3)  # Minimum query length to consider
 
 
 def load_activation_log():
@@ -77,10 +375,14 @@ def save_activation_log(data):
 
 def calculate_activation(item_data, current_time):
     """
-    Calculate ACT-R style activation:
+    Calculate ACT-R style activation with freshness-aware decay:
     A = B + Σ(Sᵢ / Dᵢ) - F
     
     Simplified: A = B + recency_score + frequency_bonus - decay
+    
+    Now with status-aware decay:
+    - Resolved problems >30 days decay 2x faster
+    - Dead-end problems >60 days decay 3x faster
     """
     access_times = item_data.get("access_times", [])
     if not access_times:
@@ -99,7 +401,10 @@ def calculate_activation(item_data, current_time):
     age = (current_time - datetime.fromisoformat(
         item_data["created"].replace("Z", "+00:00")
     )).total_seconds() / 86400  # days old
-    decay = DECAY_CONSTANT * (age ** 0.5)
+    
+    # Apply freshness-aware decay multiplier
+    freshness_multiplier = calculate_freshness_decay(item_data, current_time)
+    decay = DECAY_CONSTANT * (age ** 0.5) * freshness_multiplier
     
     activation = BASE_LEVEL + recency * 0.4 + frequency_bonus - decay
     return max(0.0, min(1.0, activation))  # Clamp to 0-1

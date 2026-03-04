@@ -195,6 +195,31 @@ Contributions welcome! Areas of interest:
 - Visualization tools for the tag graph
 - Performance optimizations for large memory bases
 
+## Changelog
+
+### v0.2.0 - March 4, 2026
+**New Features:**
+- Pre-retrieval check - Decides if memory search is needed before running
+- Memory freshness - Automatic aging/decay for old problems
+- Fast/Slow retrieval tiers - Quick QMD-only or deep unified search
+- Tiered search with automatic selection based on query complexity
+
+**Benefits:**
+- Faster queries by skipping unnecessary searches
+- Reduced token/compute usage with tiered retrieval
+- Self-maintaining memory that ages appropriately
+- Better relevance with query-aware retrieval strategy
+
+### v0.1.0 - Initial Release
+- QMD semantic search (50%)
+- ACT-R activation (15%)
+- PageRank (25%)
+- Relationships (10%)
+- Exact match bonus (10%)
+- 100% recall accuracy on test set
+
+---
+
 ## License
 
 MIT
